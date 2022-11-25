@@ -4,11 +4,8 @@ import com.fasterxml.jackson.core.JsonParser
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import com.fasterxml.jackson.module.kotlin.KotlinModule
-import java.io.File
 import java.nio.file.FileSystems
 import java.nio.file.Files
-import java.nio.file.NoSuchFileException
-import kotlin.reflect.KClass
 
 data class Config(val discord: Discord)
 
