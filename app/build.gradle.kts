@@ -38,6 +38,10 @@ dependencies {
     // https://mvnrepository.com/artifact/org.xerial/sqlite-jdbc
     implementation("org.xerial:sqlite-jdbc:3.40+")
 
+    // YAML parsing
+    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.14.+")
+    implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.7.1")
+
 }
 
 application {

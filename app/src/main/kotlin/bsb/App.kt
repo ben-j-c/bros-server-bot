@@ -3,6 +3,11 @@
  */
 package bsb
 
-fun main() {
-    println("Henlo?")
+import dev.kord.core.Kord
+
+suspend fun main() {
+    val config = parse("data/bsb.yaml")
+    val kord = Kord(config.discord.token)
+
+    kord.login()
 }
