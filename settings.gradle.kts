@@ -9,4 +9,3 @@
 
 rootProject.name = "bros-server-bot"
 include("app")
-
