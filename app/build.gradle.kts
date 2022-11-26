@@ -48,3 +48,13 @@ application {
     // Define the main class for the application.
     mainClass.set("bsb.AppKt")
 }
+
+tasks.jar {
+    manifest {
+        attributes["Main-Class"] = "bsb.AppKt"
+    }
+    configurations["compileClasspath"].forEach { file: File ->
+        from(zipTree(file.absoluteFile))
+    }
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
+}
