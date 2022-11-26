@@ -4,10 +4,32 @@
 package bsb
 
 import dev.kord.core.Kord
+import dev.kord.core.behavior.interaction.response.respond
+import dev.kord.core.event.interaction.ChatInputCommandInteractionCreateEvent
+import dev.kord.core.on
+import dev.kord.rest.builder.interaction.string
 
 suspend fun main() {
     val config = parse("data/bsb.yaml")
-    val kord = Kord(config.discord.token)
+    var token = System.getenv("BSB_TOKEN") ?: config.discord.token
+    val kord = Kord(token)
+
+    kord.createGlobalChatInputCommand(
+        "sarcasm",
+        "Make your text sarcastic"
+    ) {
+        string("text", "text to WrItE lIkE tHiS") {
+            required = true
+        }
+    }
+
+    kord.on<ChatInputCommandInteractionCreateEvent> {
+        val response = interaction.deferPublicResponse()
+        val command = interaction.command
+        val text = command.strings["text"]!!
+        val newtext = text.mapIndexed { idx, value -> if (idx % 2 == 0) value else value.uppercaseChar() }.toCharArray()
+        response.respond { content = String(newtext) }
+    }
 
     kord.login()
 }
