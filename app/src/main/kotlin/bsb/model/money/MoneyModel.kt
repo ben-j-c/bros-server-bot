@@ -12,11 +12,10 @@ import kotlinx.coroutines.runBlocking
 import java.sql.ResultSet
 
 class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
-	private val cmd: GlobalChatInputCommand
-	private val onCommandJob: Job
+	var onCommandJob: Job
 
 	companion object {
-		private const val URL = "jdbc:sqlite:./db/MoneyModel.db"
+		private const val URL = "jdbc:sqlite:../db/MoneyModel.db"
 	}
 
 	init {
@@ -29,16 +28,25 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 			);
 			""".trimIndent()
 		) {}
+
 		runBlocking {
-			this@MoneyModel.cmd = kord.createGlobalChatInputCommand("wageslave", "Wageslave base sustenance.") { }
+			val wageslaveCmd = kord.createGlobalChatInputCommand("wageslave", "Your base sustenance.") { }
+			val balanceCmd = kord.createGlobalChatInputCommand("balance", "How much $$$ you got?") { }
 			this@MoneyModel.onCommandJob = kord.on<ChatInputCommandInteractionCreateEvent> {
-				if (interaction.command.rootId != cmd.id)
-					return@on
 				val response = interaction.deferPublicResponse()
-				val res = daily(interaction.user.id)
-				response.respond {
-					content = res.exceptionOrNull()?.message ?: "$100.00 deposited for compensation"
+				if (interaction.command.rootId == wageslaveCmd.id) {
+					val res = daily(interaction.user.id)
+					response.respond {
+						content = res.exceptionOrNull()?.message ?: "$100.00 deposited for compensation"
+					}
+				} else if (interaction.command.rootId == balanceCmd.id) {
+					val res = balance(interaction.user.id)
+					val bal = res.getOrNull() ?: 0
+					response.respond {
+						content = "Balance: ${bal/100}.${(bal%100)/10}${bal%10}"
+					}
 				}
+
 			}
 		}
 	}
@@ -57,21 +65,28 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 			executeSingle<Double>("SELECT julianday(last_payday) FROM accounts WHERE user = ?", user.toString()).get()
 				?: 0.0
 		if (lastPayday + 1 > now) {
-			val waitHours = (now - lastPayday) * 24
+			val waitHours = (lastPayday - now + 1) * 24
 			val waitMins = ((waitHours % 1) * 60).toInt()
-			return Result.failure(Exception("Wait for ${waitHours.toInt()} hours and $waitMins"))
+			return Result.failure(Exception("Wait for ${waitHours.toInt()} hours and $waitMins minutes."))
 		}
 		executeNoResult(
 			"""
 			INSERT INTO accounts
 				VALUES (?,10000,DATETIME('now'))
 				ON CONFLICT(user) DO UPDATE SET
-					balance = balance + 10000;
+					balance = balance + 10000,
+					last_payday = DATETIME('now');
 		""".trimIndent()
 		) { st ->
 			st.setString(1, user.toString())
 		}
 		return Result.success(Unit)
+	}
+
+	fun balance(user: Snowflake): Result<Long> {
+		return kotlin.runCatching {
+			executeSingle<Long>("SELECT balance FROM accounts WHERE user = ?", user.toString()).get() ?: 0
+		}
 	}
 
 	override fun close() {

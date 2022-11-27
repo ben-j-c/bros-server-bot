@@ -12,7 +12,7 @@ import dev.kord.rest.builder.interaction.string
 
 suspend fun main() {
     val config = parse("data/bsb.yaml")
-    var token = System.getenv("BSB_TOKEN") ?: config.discord.token
+    val token = System.getenv("BSB_TOKEN") ?: config.getOrThrow().discord.token
     val kord = Kord(token)
 
     kord.createGlobalChatInputCommand(
