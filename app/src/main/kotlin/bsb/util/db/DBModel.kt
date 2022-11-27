@@ -62,6 +62,16 @@ abstract class DBModel<T: DBRow> {
 		}
 	}
 
+	@Throws(SQLException::class)
+	fun executeNoResult(sql: String, url: String = getDefaultURL(), assign: (PreparedStatement) -> Unit) {
+		val conn = DriverManager.getConnection(url)
+		val st = conn.prepareStatement(sql)
+		assign(st)
+		st.execute()
+		st.close()
+		conn.close()
+	}
+
 	/**
 	 * Execute an SQL query given a function to populate the prepared statement
 	 * @return a future that holds all rows from the query

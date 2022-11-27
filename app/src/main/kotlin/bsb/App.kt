@@ -3,6 +3,7 @@
  */
 package bsb
 
+import bsb.model.money.MoneyModel
 import dev.kord.core.Kord
 import dev.kord.core.behavior.interaction.response.respond
 import dev.kord.core.event.interaction.ChatInputCommandInteractionCreateEvent
@@ -30,6 +31,8 @@ suspend fun main() {
         val newtext = text.mapIndexed { idx, value -> if (idx % 2 == 0) value else value.uppercaseChar() }.toCharArray()
         response.respond { content = String(newtext) }
     }
+
+    val mm = MoneyModel(kord)
 
     kord.login()
 }
