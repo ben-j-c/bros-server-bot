@@ -12,15 +12,17 @@ import dev.kord.rest.builder.interaction.string
 import dev.kord.rest.builder.interaction.user
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
+import java.sql.DriverManager
 import java.sql.ResultSet
 import java.text.DecimalFormat
 
 
 private fun formatMoney(v: Long): String {
-	val d = DecimalFormat("#,###").format(v/100)
-	val c = v%100
-	return "$d.${c/10}${c%10}"
+	val d = DecimalFormat("#,###").format(v / 100)
+	val c = v % 100
+	return "$d.${c / 10}${c % 10}"
 }
+
 class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 	var onCommandJob: Job
 
@@ -61,20 +63,21 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 						content = "Balance: $${formatMoney(bal)}"
 					}
 				} else if (interaction.command.rootId == payCmd.id) {
-					println("Pay pig")
 					val cmd = interaction.command
 					val amount = (cmd.numbers["amount"]!! * 100).toLong()
+					val payee = kord.getUser(cmd.users["payee"]!!.id)!!
 					if (amount <= 0) {
 						response.respond {
 							content = "Quit being a joker"
 						}
 						return@on
 					}
-					val res = transfer(cmd.users["payee"]!!.id, interaction.user.id, amount)
+					val res = transfer(payee.id, interaction.user.id, amount)
 					if (res.isSuccess) {
-						response.respond { content = "Transferred $${formatMoney(amount)}" }
+						response.respond {
+							content = "Transferred $${formatMoney(amount)} to ${payee.mention}"
+						}
 					} else {
-						res.exceptionOrNull()!!.printStackTrace()
 						response.respond { content = "Transaction failed :${res.exceptionOrNull()!!.message}" }
 					}
 				}
@@ -120,26 +123,23 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 		}
 	}
 
-	fun transfer(dst: Snowflake, src: Snowflake, amount: Long): Result<Long> {
+	fun transfer(dst: Snowflake, src: Snowflake, amount: Long): Result<Unit> {
 		return kotlin.runCatching {
-			executeSingle<Long>(
-				"""
-				BEGIN TRANSACTION;
-				INSERT INTO accounts VALUES (?, 0, datetime(julianday('now')-1)) ON CONFLICT DO NOTHING;
-				UPDATE accounts SET balance = balance - ? WHERE user = ?;
-				INSERT INTO accounts
+			DriverManager.getConnection(URL).use { conn ->
+				conn.autoCommit = false
+				executeNoResult(
+					"INSERT INTO accounts VALUES (?, 0, datetime(julianday('now')-1)) ON CONFLICT DO NOTHING;",
+					dst.toString()
+				)
+				executeNoResult("UPDATE accounts SET balance = balance - ? WHERE user = ?;", amount, src.toString())
+				executeNoResult("""
+					INSERT INTO accounts
 					VALUES (?,?,datetime(julianday('now')-1))
 					ON CONFLICT(user) DO UPDATE SET
 						balance = balance + ?;
-				COMMIT;
-				""".trimIndent(),
-				dst.toString(),
-				amount,
-				dst.toString(),
-				src.toString(),
-				amount,
-				amount,
-			).get() ?: throw Exception("Transfer failed")
+				""".trimIndent(), dst.toString(), amount, amount)
+				conn.commit()
+			}
 		}
 	}
 

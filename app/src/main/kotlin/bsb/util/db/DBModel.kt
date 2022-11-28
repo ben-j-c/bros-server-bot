@@ -5,7 +5,7 @@ import java.sql.*
 import java.util.concurrent.CompletableFuture
 import kotlin.jvm.Throws
 
-fun getSQLType(v: Any) : Int {
+fun getSQLType(v: Any): Int {
 	return when (v) {
 		is Byte -> Types.TINYINT
 		is Short -> Types.SMALLINT
@@ -28,7 +28,7 @@ fun getSQLParam(v: Any): Pair<Any, Int> {
 /**
  * Common implementations for a class that represents a DB access point.
  */
-abstract class DBModel<T: DBRow> {
+abstract class DBModel<T : DBRow> {
 	/**
 	 * @return a jdbc connection URL
 	 */
@@ -53,7 +53,7 @@ abstract class DBModel<T: DBRow> {
 		return sequence {
 			st.execute()
 			val rs = st.resultSet
-			while(rs.next()) {
+			while (rs.next()) {
 				yield(getRowInstance(rs))
 			}
 			rs.close()
@@ -63,21 +63,60 @@ abstract class DBModel<T: DBRow> {
 	}
 
 	@Throws(SQLException::class)
-	fun executeNoResult(sql: String, url: String = getDefaultURL(), assign: (PreparedStatement) -> Unit) {
-		val conn = DriverManager.getConnection(url)
+	fun executeNoResult(
+		sql: String,
+		connProvided: Connection? = null,
+		url: String = getDefaultURL(),
+		assign: (PreparedStatement) -> Unit
+	) {
+		val conn = connProvided ?: DriverManager.getConnection(url)
 		val st = conn.prepareStatement(sql)
 		assign(st)
 		st.execute()
 		st.close()
-		conn.close()
+		if (connProvided == null)
+			conn.close()
 	}
+
+	@Throws(SQLException::class)
+	fun executeNoResult(
+		sql: String,
+		parameters: List<Pair<Any, Int>>,
+		connProvided: Connection? = null,
+		url: String = getDefaultURL()
+	) {
+		executeNoResult(sql, connProvided, url) { st ->
+			for ((i, p) in parameters.withIndex()) {
+				val (v, t) = p
+				st.setObject(i + 1, v, t)
+			}
+		}
+	}
+
+	@Throws(SQLException::class)
+	fun executeNoResult(
+		sql: String,
+		vararg parameters: Any,
+		connProvided: Connection? = null,
+		url: String = getDefaultURL()
+	) {
+		val values = parameters.map { p ->
+			Pair(p, getSQLType(p))
+		}.toList()
+		executeNoResult(sql, values, connProvided, url)
+	}
+
 
 	/**
 	 * Execute an SQL query given a function to populate the prepared statement
 	 * @return a future that holds all rows from the query
 	 */
 	@Throws(SQLException::class)
-	fun executeQuery(sql: String, url: String = getDefaultURL(), assign: (PreparedStatement) -> Unit): CompletableFuture<List<T>> {
+	fun executeQuery(
+		sql: String,
+		url: String = getDefaultURL(),
+		assign: (PreparedStatement) -> Unit
+	): CompletableFuture<List<T>> {
 		val conn = DriverManager.getConnection(url)
 		val st = conn.prepareStatement(sql)
 		assign(st)
@@ -101,10 +140,14 @@ abstract class DBModel<T: DBRow> {
 	 * @return a future that holds all rows from the query
 	 */
 	@Throws(SQLException::class)
-	fun executeQuery(sql: String, parameters: List<Pair<Any, Int>>, url: String = getDefaultURL()): CompletableFuture<List<T>> {
+	fun executeQuery(
+		sql: String,
+		parameters: List<Pair<Any, Int>>,
+		url: String = getDefaultURL()
+	): CompletableFuture<List<T>> {
 		return executeQuery(sql, url) { st ->
 			for ((i, param) in parameters.withIndex()) {
-				val (v,t) = param
+				val (v, t) = param
 				st.setObject(i + 1, v, t)
 			}
 		}
@@ -127,7 +170,11 @@ abstract class DBModel<T: DBRow> {
 	 * @return a future that holds all rows from the query
 	 */
 	@Throws(SQLException::class)
-	fun executeUpdate(sql: String, url: String = getDefaultURL(), assign: (PreparedStatement) -> Unit): CompletableFuture<Int> {
+	fun executeUpdate(
+		sql: String,
+		url: String = getDefaultURL(),
+		assign: (PreparedStatement) -> Unit
+	): CompletableFuture<Int> {
 		val conn = DriverManager.getConnection(url)
 		val st = conn.prepareStatement(sql)
 		assign(st)
@@ -149,12 +196,16 @@ abstract class DBModel<T: DBRow> {
 	 * Non-preferred method to execute a query that returns a single value, R, in a future
 	 */
 	@Throws(SQLException::class)
-	inline fun<reified R> executeSingle(sql: String, url: String = getDefaultURL(), assign: (PreparedStatement) -> Unit): CompletableFuture<R?> {
+	inline fun <reified R> executeSingle(
+		sql: String,
+		url: String = getDefaultURL(),
+		assign: (PreparedStatement) -> Unit
+	): CompletableFuture<R?> {
 		val conn = DriverManager.getConnection(url)
 		val st = conn.prepareStatement(sql)
 		assign(st)
 		return CompletableFuture.supplyAsync {
-			st.executeQuery().use { rs -> if(rs.next()) rs.getObject(1, R::class.java) else null }
+			st.executeQuery().use { rs -> if (rs.next()) rs.getObject(1, R::class.java) else null }
 				.also { st.close(); conn.close() }
 		}
 	}
@@ -163,9 +214,13 @@ abstract class DBModel<T: DBRow> {
 	 * Non-preferred method to execute a query that returns a single value, R, in a future
 	 */
 	@Throws(SQLException::class)
-	inline fun<reified R> executeSingle(sql: String, parameters: List<Pair<Any, Int>>, url: String = getDefaultURL()): CompletableFuture<R?> {
+	inline fun <reified R> executeSingle(
+		sql: String,
+		parameters: List<Pair<Any, Int>>,
+		url: String = getDefaultURL()
+	): CompletableFuture<R?> {
 		return executeSingle(sql, url) { st ->
-			for ((i,param) in parameters.withIndex()) {
+			for ((i, param) in parameters.withIndex()) {
 				val (v, t) = param
 				st.setObject(i + 1, v, t)
 			}
@@ -176,7 +231,11 @@ abstract class DBModel<T: DBRow> {
 	 * Preferred method to execute a query that returns a single value, R, in a future
 	 */
 	@Throws(SQLException::class)
-	inline fun<reified R> executeSingle(sql: String, vararg parameters: Any, url: String = getDefaultURL()): CompletableFuture<R?> {
+	inline fun <reified R> executeSingle(
+		sql: String,
+		vararg parameters: Any,
+		url: String = getDefaultURL()
+	): CompletableFuture<R?> {
 		val values = parameters.map { v ->
 			Pair(v, getSQLType(v))
 		}
