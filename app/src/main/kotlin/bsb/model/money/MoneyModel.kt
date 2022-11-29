@@ -27,7 +27,7 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 	var onCommandJob: Job
 
 	companion object {
-		private const val URL = "jdbc:sqlite:../db/MoneyModel.db"
+		private const val URL = "jdbc:sqlite:db/MoneyModel.db"
 	}
 
 	init {
@@ -78,7 +78,7 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 							content = "Transferred $${formatMoney(amount)} to ${payee.mention}"
 						}
 					} else {
-						response.respond { content = "Transaction failed :${res.exceptionOrNull()!!.message}" }
+						response.respond { content = "Insufficient funds" }
 					}
 				}
 			}
