@@ -129,16 +129,23 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 				conn.autoCommit = false
 				executeNoResult(
 					"INSERT INTO accounts VALUES (?, 0, datetime(julianday('now')-1)) ON CONFLICT DO NOTHING;",
-					dst.toString()
+					src.toString(),
+					connProvided = conn
 				)
-				executeNoResult("UPDATE accounts SET balance = balance - ? WHERE user = ?;", amount, src.toString())
+				executeNoResult(
+					"UPDATE accounts SET balance = balance - ? WHERE user = ?;",
+					amount,
+					src.toString(),
+					connProvided = conn
+				)
 				executeNoResult(
 					"""
 					INSERT INTO accounts
 					VALUES (?,?,datetime(julianday('now')-1))
 					ON CONFLICT(user) DO UPDATE SET
 						balance = balance + ?;
-					""".trimIndent(), dst.toString(), amount, amount
+					""".trimIndent(), dst.toString(), amount, amount,
+					connProvided = conn
 				)
 				conn.commit()
 			}
