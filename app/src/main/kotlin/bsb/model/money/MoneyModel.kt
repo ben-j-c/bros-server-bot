@@ -15,6 +15,9 @@ import kotlinx.coroutines.runBlocking
 import java.sql.DriverManager
 import java.sql.ResultSet
 import java.text.DecimalFormat
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.temporal.ChronoUnit
 
 
 private fun formatMoney(v: Long): String {
@@ -36,7 +39,7 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 			CREATE TABLE IF NOT EXISTS accounts (
 				user STRING PRIMARY KEY UNIQUE,
 				balance BIGINT NOT NULL,
-				last_payday DATETIME,
+				last_payday STRING,
 				CHECK(balance >=0)
 			);
 			""".trimIndent()
@@ -94,22 +97,23 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 	}
 
 	fun daily(user: Snowflake): Result<Unit> {
-		val now: Double = executeSingle<Double>("SELECT julianday('now');").get()!!
-		val lastPayday: Double =
-			executeSingle<Double>("SELECT julianday(last_payday) FROM accounts WHERE user = ?", user.toString()).get()
-				?: 0.0
-		if (lastPayday + 1 > now) {
-			val waitHours = (lastPayday - now + 1) * 24
-			val waitMins = ((waitHours % 1) * 60).toInt()
+		val now = LocalDate.now()
+		val tmp = executeSingle<String>("SELECT last_payday FROM accounts WHERE user = ?", user.toString()).get() ?: "1970-01-01"
+		val lastPayday = LocalDate.parse(tmp)
+		if (!now.isAfter(lastPayday)) {
+			val nowTime = LocalDateTime.now()
+			val lastPaydayTime = lastPayday.plusDays(1).atStartOfDay()
+			val waitHours  = ChronoUnit.HOURS.between(nowTime, lastPaydayTime)
+			val waitMins = (ChronoUnit.MINUTES.between(nowTime, lastPaydayTime) % 60) + 1
 			return Result.failure(Exception("Wait for ${waitHours.toInt()} hours and $waitMins minutes."))
 		}
 		executeNoResult(
 			"""
 			INSERT INTO accounts
-				VALUES (?,10000,DATETIME('now'))
+				VALUES (?,10000,"$now")
 				ON CONFLICT(user) DO UPDATE SET
 					balance = balance + 10000,
-					last_payday = DATETIME('now');
+					last_payday = "$now";
 		""".trimIndent()
 		) { st ->
 			st.setString(1, user.toString())
