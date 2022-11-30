@@ -19,8 +19,10 @@ private val mapper: ObjectMapper
         return mapper
     }
 
-fun parse(filename: String): Config {
-    return Files.newBufferedReader(FileSystems.getDefault().getPath(filename)).use {
-        mapper.readValue(it, Config::class.java)
+fun parse(filename: String): Result<Config> {
+    return runCatching {
+        Files.newBufferedReader(FileSystems.getDefault().getPath(filename)).use {
+            mapper.readValue(it, Config::class.java)
+        }
     }
 }
