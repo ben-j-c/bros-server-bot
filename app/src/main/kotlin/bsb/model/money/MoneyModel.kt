@@ -144,12 +144,8 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 	}
 
 	fun transfer(conn: Connection, dst: Snowflake, src: Snowflake, amount: Long) {
-		assert(conn.autoCommit == false)
-		executeNoResult(
-			"INSERT INTO accounts VALUES (?, 0, datetime(julianday('now')-1)) ON CONFLICT DO NOTHING;",
-			src.toString(),
-			connProvided = conn
-		)
+		assert(conn.autoCommit == false) //This function requires multiple statements thus we need to have autoCommit off
+		createAccount(conn, src)
 		executeNoResult(
 			"UPDATE accounts SET balance = balance - ? WHERE user = ?;",
 			amount,
@@ -174,16 +170,25 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 	}
 
 	fun withdraw(conn: Connection, src: Snowflake, amount: Long) {
-		assert(conn.autoCommit == false)
-		executeNoResult(
-			"INSERT INTO accounts VALUES (?, 0, datetime(julianday('now')-1)) ON CONFLICT DO NOTHING;",
-			src.toString(),
-			connProvided = conn
-		)
+		createAccount(conn, src)
 		executeNoResult(
 			"UPDATE accounts SET balance = balance - ? WHERE user = ?;",
 			amount,
 			src.toString(),
+			connProvided = conn
+		)
+	}
+
+	fun createAccountTXN(dst: Snowflake): Result<Unit> {
+		return DriverManager.getConnection(URL).transactUse { conn ->
+			createAccount(conn, dst)
+		}
+	}
+
+	fun createAccount(conn: Connection, dst: Snowflake) {
+		executeNoResult(
+			"INSERT INTO accounts VALUES (?, 0, datetime(julianday('now')-1)) ON CONFLICT DO NOTHING;",
+			dst.toString(),
 			connProvided = conn
 		)
 	}
