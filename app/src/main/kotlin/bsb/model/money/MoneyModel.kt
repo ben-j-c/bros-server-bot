@@ -1,17 +1,17 @@
 package bsb.model.money
 
 import bsb.util.db.DBModel
+import bsb.util.db.transactUse
 import dev.kord.common.entity.Snowflake
 import dev.kord.core.Kord
 import dev.kord.core.behavior.interaction.response.respond
-import dev.kord.core.entity.application.GlobalChatInputCommand
 import dev.kord.core.event.interaction.ChatInputCommandInteractionCreateEvent
 import dev.kord.core.on
 import dev.kord.rest.builder.interaction.number
-import dev.kord.rest.builder.interaction.string
 import dev.kord.rest.builder.interaction.user
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
+import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.ResultSet
 import java.text.DecimalFormat
@@ -52,12 +52,12 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 			this@MoneyModel.onCommandJob = kord.on<ChatInputCommandInteractionCreateEvent> {
 				val response = interaction.deferPublicResponse()
 				if (interaction.command.rootId == wageslaveCmd.id) {
-					val res = daily(interaction.user.id)
+					val res = dailyTXN(interaction.user.id)
 					response.respond {
 						content = res.exceptionOrNull()?.message ?: "$100.00 deposited for compensation"
 					}
 				} else if (interaction.command.rootId == balanceCmd.id) {
-					val res = balance(interaction.user.id)
+					val res = balanceTXN(interaction.user.id)
 					val bal = res.getOrNull() ?: 0
 					response.respond {
 						content = "Balance: $${formatMoney(bal)}"
@@ -72,7 +72,7 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 						}
 						return@on
 					}
-					val res = transfer(payee.id, interaction.user.id, amount)
+					val res = transferTXN(payee.id, interaction.user.id, amount)
 					if (res.isSuccess) {
 						response.respond {
 							content = "Transferred $${formatMoney(amount)} to ${payee.mention}"
@@ -93,15 +93,26 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 		return AccountRow(rs)
 	}
 
-	fun daily(user: Snowflake): Result<Unit> {
-		val now: Double = executeSingle<Double>("SELECT julianday('now');").get()!!
+	fun dailyTXN(user: Snowflake): Result<Unit> {
+		return DriverManager.getConnection(URL).transactUse { conn ->
+			daily(conn, user)
+		}
+	}
+
+	fun daily(conn: Connection, user: Snowflake) {
+		assert(conn.autoCommit == false)
+		val now: Double = executeSingle<Double>("SELECT julianday('now');", connProvided = conn)!!
 		val lastPayday: Double =
-			executeSingle<Double>("SELECT julianday(last_payday) FROM accounts WHERE user = ?", user.toString()).get()
+			executeSingle<Double>(
+				"SELECT julianday(last_payday) FROM accounts WHERE user = ?",
+				user.toString(),
+				connProvided = conn
+			)
 				?: 0.0
 		if (lastPayday + 1 > now) {
 			val waitHours = (lastPayday - now + 1) * 24
 			val waitMins = ((waitHours % 1) * 60).toInt()
-			return Result.failure(Exception("Wait for ${waitHours.toInt()} hours and $waitMins minutes."))
+			throw Exception("Wait for ${waitHours.toInt()} hours and $waitMins minutes.")
 		}
 		executeNoResult(
 			"""
@@ -110,46 +121,76 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 				ON CONFLICT(user) DO UPDATE SET
 					balance = balance + 10000,
 					last_payday = DATETIME('now');
-		""".trimIndent()
-		) { st ->
-			st.setString(1, user.toString())
-		}
-		return Result.success(Unit)
+			""".trimIndent(),
+			user.toString(), connProvided = conn,
+		)
 	}
 
-	fun balance(user: Snowflake): Result<Long> {
-		return kotlin.runCatching {
-			executeSingle<Long>("SELECT balance FROM accounts WHERE user = ?", user.toString()).get() ?: 0
+	fun balanceTXN(user: Snowflake): Result<Long> {
+		return DriverManager.getConnection(URL).transactUse { conn ->
+			balance(conn, user)
 		}
 	}
 
-	fun transfer(dst: Snowflake, src: Snowflake, amount: Long): Result<Unit> {
-		return kotlin.runCatching {
-			DriverManager.getConnection(URL).use { conn ->
-				conn.autoCommit = false
-				executeNoResult(
-					"INSERT INTO accounts VALUES (?, 0, datetime(julianday('now')-1)) ON CONFLICT DO NOTHING;",
-					src.toString(),
-					connProvided = conn
-				)
-				executeNoResult(
-					"UPDATE accounts SET balance = balance - ? WHERE user = ?;",
-					amount,
-					src.toString(),
-					connProvided = conn
-				)
-				executeNoResult(
-					"""
+	fun balance(conn: Connection, user: Snowflake): Long {
+		return executeSingle<Long>("SELECT balance FROM accounts WHERE user = ?", user.toString(), connProvided = conn)
+			?: 0
+	}
+
+	fun transferTXN(dst: Snowflake, src: Snowflake, amount: Long): Result<Unit> {
+		return DriverManager.getConnection(URL).transactUse { conn ->
+			transfer(conn, dst, src, amount)
+		}
+	}
+
+	fun transfer(conn: Connection, dst: Snowflake, src: Snowflake, amount: Long) {
+		assert(conn.autoCommit == false) //This function requires multiple statements thus we need to have autoCommit off
+		createAccount(conn, src)
+		executeNoResult(
+			"UPDATE accounts SET balance = balance - ? WHERE user = ?;",
+			amount,
+			src.toString(),
+			connProvided = conn
+		)
+		executeNoResult(
+			"""
 					INSERT INTO accounts
 					VALUES (?,?,datetime(julianday('now')-1))
 					ON CONFLICT(user) DO UPDATE SET
 						balance = balance + ?;
 					""".trimIndent(), dst.toString(), amount, amount,
-					connProvided = conn
-				)
-				conn.commit()
-			}
+			connProvided = conn
+		)
+	}
+
+	fun withdrawTXN(src: Snowflake, amount: Long): Result<Unit> {
+		return DriverManager.getConnection(URL).transactUse { conn ->
+			withdraw(conn, src, amount)
 		}
+	}
+
+	fun withdraw(conn: Connection, src: Snowflake, amount: Long) {
+		createAccount(conn, src)
+		executeNoResult(
+			"UPDATE accounts SET balance = balance - ? WHERE user = ?;",
+			amount,
+			src.toString(),
+			connProvided = conn
+		)
+	}
+
+	fun createAccountTXN(dst: Snowflake): Result<Unit> {
+		return DriverManager.getConnection(URL).transactUse { conn ->
+			createAccount(conn, dst)
+		}
+	}
+
+	fun createAccount(conn: Connection, dst: Snowflake) {
+		executeNoResult(
+			"INSERT INTO accounts VALUES (?, 0, datetime(julianday('now')-1)) ON CONFLICT DO NOTHING;",
+			dst.toString(),
+			connProvided = conn
+		)
 	}
 
 	override fun close() {

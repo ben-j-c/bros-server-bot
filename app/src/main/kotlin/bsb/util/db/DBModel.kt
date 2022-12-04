@@ -1,6 +1,5 @@
 package bsb.util.db
 
-import kotlinx.coroutines.yield
 import java.sql.*
 import java.util.concurrent.CompletableFuture
 import kotlin.jvm.Throws
@@ -23,6 +22,37 @@ fun getSQLType(v: Any): Int {
 
 fun getSQLParam(v: Any): Pair<Any, Int> {
 	return Pair(v, getSQLType(v))
+}
+
+inline fun <T : AutoCloseable?, R> T.useIf(flag: Boolean, block: () -> R): R {
+	return if (flag) {
+		this.use {
+			block()
+		}
+	} else {
+		block()
+	}
+}
+
+inline fun <R> Connection.transactUse(block: (conn: Connection) -> R): Result<R> {
+	return runCatching {
+		this.use {
+			this.autoCommit = false
+			val r = block(this)
+			this.commit()
+			r
+		}
+	}
+}
+
+inline fun <T : Connection> T.transactIf(flag: Boolean, block: () -> Unit) {
+	if (flag) {
+		this.transactUse {
+			block()
+		}
+	} else {
+		block()
+	}
 }
 
 /**
@@ -198,15 +228,14 @@ abstract class DBModel<T : DBRow> {
 	@Throws(SQLException::class)
 	inline fun <reified R> executeSingle(
 		sql: String,
-		url: String = getDefaultURL(),
+		connProvided: Connection? = null,
 		assign: (PreparedStatement) -> Unit
-	): CompletableFuture<R?> {
-		val conn = DriverManager.getConnection(url)
-		val st = conn.prepareStatement(sql)
-		assign(st)
-		return CompletableFuture.supplyAsync {
-			st.executeQuery().use { rs -> if (rs.next()) rs.getObject(1, R::class.java) else null }
-				.also { st.close(); conn.close() }
+	): R? {
+		val conn = connProvided ?: DriverManager.getConnection(getDefaultURL())
+		return conn.useIf(connProvided != conn) { //If we didn't make this connection, don't close
+			conn.prepareStatement(sql).use { st ->
+				st.executeQuery().use { rs -> if (rs.next()) rs.getObject(1, R::class.java) else null }
+			}
 		}
 	}
 
@@ -217,9 +246,9 @@ abstract class DBModel<T : DBRow> {
 	inline fun <reified R> executeSingle(
 		sql: String,
 		parameters: List<Pair<Any, Int>>,
-		url: String = getDefaultURL()
-	): CompletableFuture<R?> {
-		return executeSingle(sql, url) { st ->
+		connProvided: Connection? = null,
+	): R? {
+		return executeSingle(sql, connProvided) { st ->
 			for ((i, param) in parameters.withIndex()) {
 				val (v, t) = param
 				st.setObject(i + 1, v, t)
@@ -234,11 +263,11 @@ abstract class DBModel<T : DBRow> {
 	inline fun <reified R> executeSingle(
 		sql: String,
 		vararg parameters: Any,
-		url: String = getDefaultURL()
-	): CompletableFuture<R?> {
+		connProvided: Connection? = null,
+	): R? {
 		val values = parameters.map { v ->
 			Pair(v, getSQLType(v))
 		}
-		return executeSingle(sql, values, url)
+		return executeSingle(sql, values, connProvided)
 	}
 }
