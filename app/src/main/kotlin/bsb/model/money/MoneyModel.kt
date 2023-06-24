@@ -1,21 +1,17 @@
 package bsb.model.money
 
+import bsb.model.CommandDirectory
 import bsb.util.db.DBModel
 import bsb.util.db.transactUse
 import dev.kord.common.entity.Snowflake
 import dev.kord.core.Kord
 import dev.kord.core.behavior.interaction.response.respond
-import dev.kord.core.event.interaction.ChatInputCommandInteractionCreateEvent
-import dev.kord.core.on
 import dev.kord.rest.builder.interaction.number
 import dev.kord.rest.builder.interaction.user
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.runBlocking
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.ResultSet
 import java.text.DecimalFormat
-
 
 private fun formatMoney(v: Long): String {
 	val d = DecimalFormat("#,###").format(v / 100)
@@ -24,7 +20,7 @@ private fun formatMoney(v: Long): String {
 }
 
 class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
-	var onCommandJob: Job
+	val commandDirectory: CommandDirectory
 
 	companion object {
 		private const val URL = "jdbc:sqlite:db/MoneyModel.db"
@@ -42,44 +38,42 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 			""".trimIndent()
 		) {}
 
-		runBlocking {
-			val wageslaveCmd = kord.createGlobalChatInputCommand("wageslave", "Your base sustenance.") { }
-			val balanceCmd = kord.createGlobalChatInputCommand("balance", "How much $$$ you got?") { }
-			val payCmd = kord.createGlobalChatInputCommand("pay", "Payment for services.") {
+		commandDirectory = CommandDirectory(kord) {
+			addCommand("wageslave", "Your base sustenance.") {
+			}.addHandler { response ->
+				val res = dailyTXN(interaction.user.id)
+				response.respond {
+					content = res.exceptionOrNull()?.message ?: "$100.00 deposited for compensation"
+				}
+			}
+			addCommand("balance", "How much $$$ you got?") {
+			}.addHandler {response ->
+				val res = balanceTXN(interaction.user.id)
+				val bal = res.getOrNull() ?: 0
+				response.respond {
+					content = "Balance: $${formatMoney(bal)}"
+				}
+			}
+			addCommand("pay", "Payment for services.") {
 				user("payee", "Who receives this.") { required = true }
 				number("amount", "How much to transfer.") { required = true }
-			}
-			this@MoneyModel.onCommandJob = kord.on<ChatInputCommandInteractionCreateEvent> {
-				val response = interaction.deferPublicResponse()
-				if (interaction.command.rootId == wageslaveCmd.id) {
-					val res = dailyTXN(interaction.user.id)
+			}.addHandler {response ->
+				val cmd = interaction.command
+				val amount = (cmd.numbers["amount"]!! * 100).toLong()
+				val payee = kord.getUser(cmd.users["payee"]!!.id)!!
+				if (amount <= 0) {
 					response.respond {
-						content = res.exceptionOrNull()?.message ?: "$100.00 deposited for compensation"
+						content = "Quit being a joker"
 					}
-				} else if (interaction.command.rootId == balanceCmd.id) {
-					val res = balanceTXN(interaction.user.id)
-					val bal = res.getOrNull() ?: 0
+					return@addHandler
+				}
+				val res = transferTXN(payee.id, interaction.user.id, amount)
+				if (res.isSuccess) {
 					response.respond {
-						content = "Balance: $${formatMoney(bal)}"
+						content = "Transferred $${formatMoney(amount)} to ${payee.mention}"
 					}
-				} else if (interaction.command.rootId == payCmd.id) {
-					val cmd = interaction.command
-					val amount = (cmd.numbers["amount"]!! * 100).toLong()
-					val payee = kord.getUser(cmd.users["payee"]!!.id)!!
-					if (amount <= 0) {
-						response.respond {
-							content = "Quit being a joker"
-						}
-						return@on
-					}
-					val res = transferTXN(payee.id, interaction.user.id, amount)
-					if (res.isSuccess) {
-						response.respond {
-							content = "Transferred $${formatMoney(amount)} to ${payee.mention}"
-						}
-					} else {
-						response.respond { content = "Insufficient funds" }
-					}
+				} else {
+					response.respond { content = "Insufficient funds" }
 				}
 			}
 		}
@@ -194,6 +188,6 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 	}
 
 	override fun close() {
-		this.onCommandJob.cancel()
+		commandDirectory.close()
 	}
 }

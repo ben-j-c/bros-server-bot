@@ -9,7 +9,6 @@
 plugins {
     // Apply the org.jetbrains.kotlin.jvm Plugin to add support for Kotlin.
     id("org.jetbrains.kotlin.jvm") version "1.8.0-Beta"
-
     // Apply the application plugin to add support for building a CLI application in Java.
     application
 }
@@ -42,6 +41,14 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.14.+")
     implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.7.1")
 
+    implementation("jakarta.inject:jakarta.inject-api:2.0.1")
+    implementation("jakarta.annotation:jakarta.annotation-api:2.1.1")
+}
+
+buildscript {
+    dependencies {
+        classpath(kotlin("gradle-plugin", version = "1.8.0-Beta"))
+    }
 }
 
 application {
