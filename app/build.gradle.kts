@@ -43,6 +43,10 @@ dependencies {
 
     implementation("jakarta.inject:jakarta.inject-api:2.0.1")
     implementation("jakarta.annotation:jakarta.annotation-api:2.1.1")
+
+    implementation("org.jetbrains.kotlin:kotlin-reflect:1.8.22")
+
+    implementation("org.slf4j:slf4j-simple:2.0.7")
 }
 
 buildscript {

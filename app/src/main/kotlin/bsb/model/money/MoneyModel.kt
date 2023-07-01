@@ -1,29 +1,41 @@
 package bsb.model.money
 
+import bsb.model.CommandArg
 import bsb.model.CommandDirectory
+import bsb.model.CommandHandler
+import bsb.model.CommandType
 import bsb.util.db.DBModel
 import bsb.util.db.transactUse
 import dev.kord.common.entity.Snowflake
 import dev.kord.core.Kord
+import dev.kord.core.behavior.interaction.respondPublic
+import dev.kord.core.behavior.interaction.response.DeferredPublicMessageInteractionResponseBehavior
 import dev.kord.core.behavior.interaction.response.respond
+import dev.kord.core.entity.User
+import dev.kord.core.event.interaction.ChatInputCommandInteractionCreateEvent
 import dev.kord.rest.builder.interaction.number
 import dev.kord.rest.builder.interaction.user
+import kotlinx.coroutines.runBlocking
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.ResultSet
 import java.text.DecimalFormat
 
-private fun formatMoney(v: Long): String {
+public fun formatMoney(v: Long): String {
 	val d = DecimalFormat("#,###").format(v / 100)
 	val c = v % 100
 	return "$d.${c / 10}${c % 10}"
+}
+
+public fun convertToModelValue(v: Double): Long {
+	return (v * 100).toLong()
 }
 
 class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 	val commandDirectory: CommandDirectory
 
 	companion object {
-		private const val URL = "jdbc:sqlite:db/MoneyModel.db"
+		const val URL = "jdbc:sqlite:db/MoneyModel.db"
 	}
 
 	init {
@@ -39,43 +51,51 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 		) {}
 
 		commandDirectory = CommandDirectory(kord) {
-			addCommand("wageslave", "Your base sustenance.") {
-			}.addHandler { response ->
-				val res = dailyTXN(interaction.user.id)
-				response.respond {
-					content = res.exceptionOrNull()?.message ?: "$100.00 deposited for compensation"
-				}
+			addCommand(::payCommand, kord)
+			addCommand(::wageslaveCommand)
+			addCommand(::balanceCommand)
+		}
+	}
+
+	@CommandHandler(name = "wageslave", description = "Your base sustenance.")
+	suspend fun wageslaveCommand(ev: ChatInputCommandInteractionCreateEvent) {
+		val res = dailyTXN(ev.interaction.user.id)
+		ev.interaction.respondPublic {
+			content = res.exceptionOrNull()?.message ?: "$100.00 deposited for compensation"
+		}
+	}
+
+	@CommandHandler(name = "balance", description = "How much $$$ you got?")
+	suspend fun balanceCommand(ev: ChatInputCommandInteractionCreateEvent) {
+		val res = balanceTXN(ev.interaction.user.id)
+		val bal = res.getOrNull() ?: 0
+		val response = ev.interaction.deferPublicResponse()
+		response.respond {
+			content = "Balance: $${formatMoney(bal)}"
+		}
+	}
+
+	@CommandHandler(name = "pay", description = "Payment for services.")
+	suspend fun payCommand(@CommandArg("Who receives this.") payee: Snowflake,
+						   @CommandArg("How much to transfer.") amount: Double,
+						   kord: Kord,
+						   event: ChatInputCommandInteractionCreateEvent) {
+		val amountValue = (amount * 100).toLong()
+		val payeeUser = kord.getUser(payee)!!
+		val response = event.interaction.deferPublicResponse()
+		if (amountValue <= 0) {
+			response.respond {
+				content = "Quit being a joker"
 			}
-			addCommand("balance", "How much $$$ you got?") {
-			}.addHandler {response ->
-				val res = balanceTXN(interaction.user.id)
-				val bal = res.getOrNull() ?: 0
-				response.respond {
-					content = "Balance: $${formatMoney(bal)}"
-				}
+			return
+		}
+		val res = this.transferTXN(payeeUser.id, event.interaction.user.id, amountValue)
+		if (res.isSuccess) {
+			response.respond {
+				content = "Transferred $${formatMoney(amountValue)} to ${payeeUser.mention}"
 			}
-			addCommand("pay", "Payment for services.") {
-				user("payee", "Who receives this.") { required = true }
-				number("amount", "How much to transfer.") { required = true }
-			}.addHandler {response ->
-				val cmd = interaction.command
-				val amount = (cmd.numbers["amount"]!! * 100).toLong()
-				val payee = kord.getUser(cmd.users["payee"]!!.id)!!
-				if (amount <= 0) {
-					response.respond {
-						content = "Quit being a joker"
-					}
-					return@addHandler
-				}
-				val res = transferTXN(payee.id, interaction.user.id, amount)
-				if (res.isSuccess) {
-					response.respond {
-						content = "Transferred $${formatMoney(amount)} to ${payee.mention}"
-					}
-				} else {
-					response.respond { content = "Insufficient funds" }
-				}
-			}
+		} else {
+			response.respond { content = "Insufficient funds" }
 		}
 	}
 
@@ -85,6 +105,12 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 
 	override fun getRowInstance(rs: ResultSet): AccountRow {
 		return AccountRow(rs)
+	}
+
+	fun <R> txn(func: (Connection) -> R): Result<R> {
+		return DriverManager.getConnection(URL).transactUse { conn ->
+			func(conn)
+		}
 	}
 
 	fun dailyTXN(user: Snowflake): Result<Unit> {
@@ -127,8 +153,9 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 	}
 
 	fun balance(conn: Connection, user: Snowflake): Long {
-		return executeSingle<Long>("SELECT balance FROM accounts WHERE user = ?", user.toString(), connProvided = conn)
-			?: 0
+		val v = executeSingle<Long>("SELECT balance FROM accounts WHERE user = ?", user.toString(), connProvided = conn)
+		println(v)
+		return v ?: 0
 	}
 
 	fun transferTXN(dst: Snowflake, src: Snowflake, amount: Long): Result<Unit> {
@@ -173,10 +200,26 @@ class MoneyModel(kord: Kord) : DBModel<AccountRow>(), AutoCloseable {
 		)
 	}
 
+	fun deposit(conn: Connection, dst: Snowflake, amount: Long) {
+		createAccount(conn, dst)
+		executeNoResult(
+			"UPDATE accounts SET balance = balance + ? WHERE user = ?;",
+			amount,
+			dst.toString(),
+			connProvided = conn
+		)
+	}
+
 	fun createAccountTXN(dst: Snowflake): Result<Unit> {
 		return DriverManager.getConnection(URL).transactUse { conn ->
 			createAccount(conn, dst)
 		}
+	}
+
+	fun getAccount(src: Snowflake, conn: Connection?): AccountRow? {
+		return executeQuery("""
+				SELECT * FROM accounts WHERE user = ?;
+			""".trimIndent(), conn, src).firstOrNull()
 	}
 
 	fun createAccount(conn: Connection, dst: Snowflake) {

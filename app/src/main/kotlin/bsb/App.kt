@@ -11,11 +11,12 @@ import dev.kord.core.on
 import dev.kord.rest.builder.interaction.string
 
 suspend fun main() {
+	println(System.getProperty("user.dir"))
     val config = parse("data/bsb.yaml")
     val token = System.getenv("BSB_TOKEN") ?: config.getOrThrow().discord.token
     val kord = Kord(token)
 
-    kord.createGlobalChatInputCommand(
+    val sarcasmCmd = kord.createGlobalChatInputCommand(
         "sarcasm",
         "Make your text sarcastic"
     ) {
@@ -25,7 +26,10 @@ suspend fun main() {
     }
 
     kord.on<ChatInputCommandInteractionCreateEvent> {
-        val response = interaction.deferPublicResponse()
+        if (this.interaction.command.rootId != sarcasmCmd.id) {
+			return@on
+		}
+		val response = interaction.deferPublicResponse()
         val command = interaction.command
         val text = command.strings["text"]!!
         val newtext = text.mapIndexed { idx, value -> if (idx % 2 == 0) value else value.uppercaseChar() }.toCharArray()

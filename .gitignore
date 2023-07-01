@@ -3,6 +3,7 @@
 !src/**/build/
 db
 .env
+app/data/bsb.yaml
 
 # Ignore Gradle GUI config
 gradle-app.setting

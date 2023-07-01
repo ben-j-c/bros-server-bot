@@ -96,10 +96,9 @@ abstract class DBModel<T : DBRow> {
 	fun executeNoResult(
 		sql: String,
 		connProvided: Connection? = null,
-		url: String = getDefaultURL(),
 		assign: (PreparedStatement) -> Unit
 	) {
-		val conn = connProvided ?: DriverManager.getConnection(url)
+		val conn = connProvided ?: DriverManager.getConnection(getDefaultURL())
 		val st = conn.prepareStatement(sql)
 		assign(st)
 		st.execute()
@@ -113,9 +112,8 @@ abstract class DBModel<T : DBRow> {
 		sql: String,
 		parameters: List<Pair<Any, Int>>,
 		connProvided: Connection? = null,
-		url: String = getDefaultURL()
 	) {
-		executeNoResult(sql, connProvided, url) { st ->
+		executeNoResult(sql, connProvided) { st ->
 			for ((i, p) in parameters.withIndex()) {
 				val (v, t) = p
 				st.setObject(i + 1, v, t)
@@ -128,12 +126,11 @@ abstract class DBModel<T : DBRow> {
 		sql: String,
 		vararg parameters: Any,
 		connProvided: Connection? = null,
-		url: String = getDefaultURL()
 	) {
 		val values = parameters.map { p ->
 			Pair(p, getSQLType(p))
 		}.toList()
-		executeNoResult(sql, values, connProvided, url)
+		executeNoResult(sql, values, connProvided)
 	}
 
 
@@ -144,24 +141,22 @@ abstract class DBModel<T : DBRow> {
 	@Throws(SQLException::class)
 	fun executeQuery(
 		sql: String,
-		url: String = getDefaultURL(),
+		connProvided: Connection?,
 		assign: (PreparedStatement) -> Unit
-	): CompletableFuture<List<T>> {
-		val conn = DriverManager.getConnection(url)
+	): List<T> {
+		val conn = connProvided ?: DriverManager.getConnection(getDefaultURL())
 		val st = conn.prepareStatement(sql)
 		assign(st)
-		return CompletableFuture.supplyAsync {
-			val retval = mutableListOf<T>()
-			assign(st)
-			st.executeQuery().use { rs ->
-				while (rs.next()) {
-					retval.add(getRowInstance(rs))
-				}
+		val retval = mutableListOf<T>()
+		assign(st)
+		st.executeQuery().use { rs ->
+			while (rs.next()) {
+				retval.add(getRowInstance(rs))
 			}
-			st.close()
-			conn.close()
-			retval
 		}
+		st.close()
+		conn.close()
+		return retval
 
 	}
 
@@ -173,9 +168,9 @@ abstract class DBModel<T : DBRow> {
 	fun executeQuery(
 		sql: String,
 		parameters: List<Pair<Any, Int>>,
-		url: String = getDefaultURL()
-	): CompletableFuture<List<T>> {
-		return executeQuery(sql, url) { st ->
+		connProvided: Connection?
+	): List<T> {
+		return executeQuery(sql, connProvided) { st ->
 			for ((i, param) in parameters.withIndex()) {
 				val (v, t) = param
 				st.setObject(i + 1, v, t)
@@ -188,11 +183,11 @@ abstract class DBModel<T : DBRow> {
 	 * @return a future that holds all rows from the query
 	 */
 	@Throws(SQLException::class)
-	fun executeQuery(sql: String, vararg parameters: Any, url: String = getDefaultURL()): CompletableFuture<List<T>> {
+	fun executeQuery(sql: String, connProvided: Connection?, vararg parameters: Any): List<T> {
 		val values = parameters.map { v ->
 			Pair(v, getSQLType(v))
 		}
-		return executeQuery(sql, values, url)
+		return executeQuery(sql, values, connProvided)
 	}
 
 	/**
@@ -234,6 +229,7 @@ abstract class DBModel<T : DBRow> {
 		val conn = connProvided ?: DriverManager.getConnection(getDefaultURL())
 		return conn.useIf(connProvided != conn) { //If we didn't make this connection, don't close
 			conn.prepareStatement(sql).use { st ->
+				assign(st)
 				st.executeQuery().use { rs -> if (rs.next()) rs.getObject(1, R::class.java) else null }
 			}
 		}
